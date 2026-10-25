@@ -1,7 +1,7 @@
 {
   "name": "city-life-online",
   "version": "0.1.0",
-  "main": "server-3.js",
-  "scripts": { "start": "node server-3.js" },
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
   "dependencies": {}
 }
