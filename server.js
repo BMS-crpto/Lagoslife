@@ -60,7 +60,9 @@ const SHOPS = [[-4,-3],[3,-3],[-4,3],[3,3]].map(([bx,bz],i) => ({ id: i, x: cx(b
 const JAIL = { x: -175, z: 175 };
 const CLUB = { x: cx(0) + 9, z: cx(-4) + 6 };
 const FOOD = [{ name: 'Jollof & chicken', price: 50, en: 40 }, { name: 'Amala & ewedu', price: 30, en: 30 }, { name: 'Suya', price: 20, en: 15 }];
-const WORLD = { houses: HOUSES, shops: SHOPS, jail: JAIL, club: CLUB };
+const LM = [['🏨','Eko Hotels',-120,-120],['🌴','Lekki Conservation',120,-120],['🏢','Marina Towers',-40,-40],['🛒','Balogun Market',40,40],['🕌','Central Mosque',120,40],['⛪','Church',-120,40],['🚓','Police Station',0,-80],['⛳','Ikoyi Golf Club',80,120],['🎉','Quilox Club',40,-120],['🏠','Home Estate',-80,120]].map(([emoji,name,x,z],id) => ({ id, emoji, name, x, z }));
+const RIDES = { keke: { emoji: '🛺', base: 30, rate: 0.5 }, danfo: { emoji: '🚌', base: 30, rate: 0.2 }, okada: { emoji: '🏍️', base: 100, rate: 1.2 }, car: { emoji: '🚗', base: 200, rate: 2.5 } };
+const WORLD = { houses: HOUSES, shops: SHOPS, jail: JAIL, club: CLUB, landmarks: LM };
 
 function send(ws, msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); }
 function broadcast(room, msg) { Object.values(rooms[room].players).forEach(p => send(p.ws, msg)); }
@@ -90,7 +92,7 @@ function onConnection(ws) {
       id = nextId++;
       rooms[room] = rooms[room] || { players: {}, owners: {} };
       rooms[room].players[id] = {
-        ws, id, name: String(m.name || 'Player').slice(0, 14), role, money: 500, vibes: 0, energy: 100, carry: false, car: -1, jailUntil: 0, cd: {},
+        ws, id, name: String(m.name || 'Player').slice(0, 14), role, money: 500, vibes: 0, energy: 100, rest: 100, fun: 100, carry: false, car: -1, jailUntil: 0, cd: {},
         x: (Math.random() - 0.5) * 8, z: (Math.random() - 0.5) * 8, ry: 0, moving: false
       };
       send(ws, { t: 'welcome', id, room, world: WORLD });
@@ -127,8 +129,27 @@ function onConnection(ws) {
       if (dist(CLUB, p) > 12) return send(ws, { t: 'toast', text: 'Go to Quilox Club' });
       if (p.money < 100) return send(ws, { t: 'toast', text: 'Need ₦100 for the club' });
       if (!cooldown(p, 'party', 5000)) return send(ws, { t: 'toast', text: 'Relax, one drink at a time' });
-      p.money -= 100; p.vibes++;
+      p.money -= 100; p.vibes++; p.fun = Math.min(100, p.fun + 30);
       broadcast(room, { t: 'toast', text: `🎉 ${p.name} is vibing at Quilox! (vibes ${p.vibes})` });
+    } else if (m.t === 'setrole') {
+      if (ROLES.includes(m.role)) { p.role = m.role; p.carry = false; broadcast(room, { t: 'toast', text: `💼 ${p.name} is now a ${m.role}` }); }
+    } else if (m.t === 'sleep') {
+      if (p.jailUntil > now) return;
+      const h = HOUSES.find(h => dist(h, p) < 9 && R.owners[h.id] === p.id);
+      if (!h) return send(ws, { t: 'toast', text: 'Go to your own house to sleep' });
+      if (!cooldown(p, 'sleep', 8000)) return send(ws, { t: 'toast', text: 'You just woke up' });
+      p.rest = Math.min(100, p.rest + 50); send(ws, { t: 'toast', text: '😴 Slept well' });
+    } else if (m.t === 'ride') {
+      if (p.jailUntil > now) return;
+      const L = LM[m.dest], r = RIDES[m.type];
+      if (!L || !r) return;
+      const fare = Math.round(r.base + dist(L, p) * r.rate);
+      if (p.money < fare) return send(ws, { t: 'toast', text: 'Need ₦' + fare });
+      p.money -= fare;
+      const drv = Object.values(R.players).find(q => q.id !== p.id && q.role === 'taxi' && q.jailUntil <= now);
+      if (drv) { drv.money += Math.round(fare / 2); send(drv.ws, { t: 'toast', text: `🚖 ${p.name} paid you ₦${Math.round(fare / 2)}` }); }
+      p.x = L.x + 3; p.z = L.z + 3; p.car = -1; send(ws, { t: 'tp', x: p.x, z: p.z });
+      send(ws, { t: 'toast', text: `${r.emoji} Arrived at ${L.name} (₦${fare})` });
     } else if (m.t === 'action') {
       if (p.jailUntil > now) return send(ws, { t: 'toast', text: 'You are in jail!' });
       const say = text => broadcast(room, { t: 'toast', text });
@@ -198,7 +219,7 @@ setInterval(() => {
     for (const h in R.owners) { const o = R.players[R.owners[h]]; if (o) owners[h] = o.name; }
     const list = Object.values(R.players).map(p => ({
       id: p.id, name: p.name, role: p.role, x: p.x, z: p.z, ry: p.ry, moving: p.moving,
-      car: p.car, money: p.money, vibes: p.vibes, energy: Math.round(p.energy), carry: p.carry, jailed: p.jailUntil > now
+      car: p.car, money: p.money, vibes: p.vibes, energy: Math.round(p.energy), rest: Math.round(p.rest), fun: Math.round(p.fun), carry: p.carry, jailed: p.jailUntil > now
     }));
     broadcast(code, { t: 'state', players: list, owners, tod: ((now - START) / 240000) % 1, rain, nepa });
   }
@@ -216,7 +237,7 @@ const START = Date.now(); let rain = false, nepa = false;
 setInterval(() => { if (Math.random() < 0.25) rain = !rain; if (Math.random() < 0.2) nepa = !nepa; }, 40000);
 setInterval(() => {
   for (const code in rooms) for (const p of Object.values(rooms[code].players)) {
-    p.energy = Math.max(0, p.energy - 1);
+    p.energy = Math.max(0, p.energy - 1); p.rest = Math.max(0, p.rest - 0.6); p.fun = Math.max(0, p.fun - 0.8);
     if (p.energy === 0 && Math.random() < 0.2) send(p.ws, { t: 'toast', text: '😫 Exhausted! Buy food at a shop' });
   }
 }, 3000);
